@@ -18,6 +18,6 @@ RUN cargo build --release
 
 # 6. Final minimal image
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/slack_socket_bridge /usr/local/bin/slack_socket_bridge
 ENTRYPOINT ["/usr/local/bin/slack_socket_bridge"]
