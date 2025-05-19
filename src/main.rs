@@ -1,0 +1,121 @@
+use clap::Parser;
+use slack_morphism::prelude::*;
+use std::{env, sync::Arc};
+use tracing::Level;
+
+#[derive(Parser, Debug)]
+#[command(name = "slack_socket_bridge")]
+struct Args {
+    // Log level
+    #[arg(short, long, value_name = "LOG LEVEL")]
+    log_level: Option<tracing::Level>,
+}
+
+async fn _test_interaction_events_function(
+    event: SlackInteractionEvent,
+    _client: Arc<SlackHyperClient>,
+    _states: SlackClientEventsUserState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::debug!("{:#?}", event);
+    Ok(())
+}
+
+async fn _test_command_events_function(
+    event: SlackCommandEvent,
+    _client: Arc<SlackHyperClient>,
+    _states: SlackClientEventsUserState,
+) -> Result<SlackCommandEventResponse, Box<dyn std::error::Error + Send + Sync>> {
+    tracing::debug!("{:#?}", event);
+    Ok(SlackCommandEventResponse::new(
+        SlackMessageContent::new().with_text("Working on it".into()),
+    ))
+}
+
+async fn test_push_events_sm_function(
+    event: SlackPushEventCallback,
+    _client: Arc<SlackHyperClient>,
+    _states: SlackClientEventsUserState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing::debug!("{:#?}", event);
+
+    let event_value = serde_json::to_value(event)?;
+    let webhook_url = env::var("N8N_WEBHOOK_URL")?;
+
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::error!("Failed to create webhook client: {}", err);
+            return Err(Box::new(err));
+        }
+    };
+
+    tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
+    match client.post(&webhook_url).json(&event_value).send().await {
+        Ok(res) => {
+            println!("res");
+            tracing::info!("webhook result status: {}", res.status());
+        }
+        Err(err) => {
+            println!("err");
+            tracing::warn!("Failed to send message to webhook. Error: {}", err);
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+
+    let log_level = args.log_level.unwrap_or(Level::INFO);
+    tracing_subscriber::fmt().with_max_level(log_level).init();
+
+    let app_token_value: SlackApiTokenValue = match env::var("SLACK_SOCKET_TOKEN") {
+        Ok(tkn) => tkn.into(),
+        Err(err) => {
+            tracing::error!(
+                "Failed to get environment variable SLACK_SOCKET_TOKEN. Error: {}",
+                err
+            );
+            std::process::exit(1);
+        }
+    };
+    let app_token: SlackApiToken = SlackApiToken::new(app_token_value);
+
+    // Client for the websocket connection
+    let socket_client = Arc::new(SlackClient::new(
+        SlackClientHyperConnector::new().expect("Failed creting slack client"),
+    ));
+
+    // Add callbacks
+    let socket_mode_callbacks = SlackSocketModeListenerCallbacks::new()
+        // .with_command_events(test_command_events_function)
+        // .with_interaction_events(test_interaction_events_function)
+        .with_push_events(test_push_events_sm_function);
+
+    let listener_environment = Arc::new(SlackClientEventsListenerEnvironment::new(
+        socket_client.clone(),
+    ));
+
+    let socket_mode_listener = SlackClientSocketModeListener::new(
+        &SlackClientSocketModeConfig::new(),
+        listener_environment.clone(),
+        socket_mode_callbacks,
+    );
+
+    // Register an app token to listen for events,
+    match socket_mode_listener.listen_for(&app_token).await {
+        Ok(_) => (),
+        Err(err) => {
+            tracing::error!("Failed setting socket to listen. Error {}", err);
+            std::process::exit(1);
+        }
+    }
+
+    // Listen indefinitely
+    socket_mode_listener.serve().await;
+}
