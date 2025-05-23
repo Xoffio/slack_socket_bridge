@@ -39,7 +39,6 @@ async fn test_push_events_sm_function(
     tracing::debug!("{:#?}", event);
 
     let event_value = serde_json::to_value(event)?;
-    let webhook_url = env::var("N8N_WEBHOOK_URL")?;
 
     let client = match reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
@@ -52,15 +51,27 @@ async fn test_push_events_sm_function(
         }
     };
 
-    tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
-    match client.post(&webhook_url).json(&event_value).send().await {
-        Ok(res) => {
-            println!("res");
-            tracing::info!("webhook result status: {}", res.status());
+    if let Ok(webhook_url) = env::var("WEBHOOK_URL_PROD") {
+        tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
+        match client.post(&webhook_url).json(&event_value).send().await {
+            Ok(res) => {
+                tracing::info!("webhook result status: {}", res.status());
+            }
+            Err(err) => {
+                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+            }
         }
-        Err(err) => {
-            println!("err");
-            tracing::warn!("Failed to send message to webhook. Error: {}", err);
+    }
+
+    if let Ok(webhook_url) = env::var("WEBHOOK_URL_DEV") {
+        tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
+        match client.post(&webhook_url).json(&event_value).send().await {
+            Ok(res) => {
+                tracing::info!("webhook result status: {}", res.status());
+            }
+            Err(err) => {
+                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+            }
         }
     }
 

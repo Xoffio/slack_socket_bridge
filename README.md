@@ -1,6 +1,7 @@
 Create a `.env` file with the next env variables:
 
-- `N8N_WEBHOOK_URL`: Webhook URL created by n8n.
+- `WEBHOOK_URL_PROD`: Production Webhook URL to send data to.
+- `WEBHOOK_URL_DEV`: Development Webhook URL to send data to.
 - `SLACK_SOCKET_TOKEN`: Slack socket token
 
 To build the image and run it locally run the next commands:
