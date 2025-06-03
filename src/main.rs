@@ -1,4 +1,5 @@
 use clap::Parser;
+use reqwest::StatusCode;
 use slack_morphism::prelude::*;
 use std::{env, sync::Arc};
 use tracing::Level;
@@ -40,32 +41,79 @@ async fn handle_command_events(
         }
     };
 
+    println!("{:#?}", &event_value);
+
     if let Ok(webhook_url) = env::var("WEBHOOK_URL_CMD_PROD") {
         tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
-        match client.post(&webhook_url).json(&event_value).send().await {
+        let res_msg = match client.post(&webhook_url).json(&event_value).send().await {
             Ok(res) => {
                 tracing::info!("webhook result status: {}", res.status());
+
+                if res.status().is_success() {
+                    let res_text = res.text().await;
+
+                    if let Ok(text) = res_text {
+                        Ok(text)
+                    } else {
+                        Err("Internal error. The action may have executed, but I was unable to retrieve the result.".to_string())
+                    }
+                } else {
+                    Err(format!(
+                        "Internal Error. Bridge could't connect to webhook. Resturned code: {}",
+                        res.status()
+                    ))
+                }
             }
             Err(err) => {
-                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+                let error_msg = format!("Failed to send message to webhook. Error: {}", err);
+                tracing::warn!("{}", &error_msg);
+                Err(error_msg)
             }
+        };
+
+        // For now I will skip errors in production in case the user is using the dev webhook.
+        if let Ok(text) = res_msg {
+            return Ok(SlackCommandEventResponse::new(
+                SlackMessageContent::new().with_text(text),
+            ));
         }
     }
 
     if let Ok(webhook_url) = env::var("WEBHOOK_URL_CMD_DEV") {
         tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
-        match client.post(&webhook_url).json(&event_value).send().await {
+        let res_msg = match client.post(&webhook_url).json(&event_value).send().await {
             Ok(res) => {
                 tracing::info!("webhook result status: {}", res.status());
+
+                if res.status().is_success() {
+                    let res_text = res.text().await;
+
+                    if let Ok(text) = res_text {
+                        text
+                    } else {
+                        "Internal error. The action may have executed, but I was unable to retrieve the result.".to_string()
+                    }
+                } else {
+                    format!(
+                        "Internal Error. Bridge could't connect to webhook. Resturned code: {}",
+                        res.status()
+                    )
+                }
             }
             Err(err) => {
-                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+                let error_msg = format!("Failed to send message to webhook. Error: {}", err);
+                tracing::warn!("{}", &error_msg);
+                error_msg
             }
-        }
+        };
+
+        return Ok(SlackCommandEventResponse::new(
+            SlackMessageContent::new().with_text(res_msg),
+        ));
     }
 
     Ok(SlackCommandEventResponse::new(
-        SlackMessageContent::new().with_text("Working on it".into()),
+        SlackMessageContent::new().with_text("Failed to talk to backend. slack_socket_bridge didn't find any ENV variable webhook token.".into()),
     ))
 }
 
