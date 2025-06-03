@@ -20,18 +20,56 @@ async fn _test_interaction_events_function(
     Ok(())
 }
 
-async fn _test_command_events_function(
+async fn handle_command_events(
     event: SlackCommandEvent,
     _client: Arc<SlackHyperClient>,
     _states: SlackClientEventsUserState,
 ) -> Result<SlackCommandEventResponse, Box<dyn std::error::Error + Send + Sync>> {
     tracing::debug!("{:#?}", event);
+
+    let event_value = serde_json::to_value(event)?;
+
+    let client = match reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::error!("Failed to create webhook client: {}", err);
+            return Err(Box::new(err));
+        }
+    };
+
+    if let Ok(webhook_url) = env::var("WEBHOOK_URL_CMD_PROD") {
+        tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
+        match client.post(&webhook_url).json(&event_value).send().await {
+            Ok(res) => {
+                tracing::info!("webhook result status: {}", res.status());
+            }
+            Err(err) => {
+                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+            }
+        }
+    }
+
+    if let Ok(webhook_url) = env::var("WEBHOOK_URL_CMD_DEV") {
+        tracing::debug!("Tring to send a message to webhook {}", &webhook_url);
+        match client.post(&webhook_url).json(&event_value).send().await {
+            Ok(res) => {
+                tracing::info!("webhook result status: {}", res.status());
+            }
+            Err(err) => {
+                tracing::warn!("Failed to send message to webhook. Error: {}", err);
+            }
+        }
+    }
+
     Ok(SlackCommandEventResponse::new(
         SlackMessageContent::new().with_text("Working on it".into()),
     ))
 }
 
-async fn test_push_events_sm_function(
+async fn handle_push_events(
     event: SlackPushEventCallback,
     _client: Arc<SlackHyperClient>,
     _states: SlackClientEventsUserState,
@@ -104,9 +142,9 @@ async fn main() {
 
     // Add callbacks
     let socket_mode_callbacks = SlackSocketModeListenerCallbacks::new()
-        // .with_command_events(test_command_events_function)
+        .with_command_events(handle_command_events)
         // .with_interaction_events(test_interaction_events_function)
-        .with_push_events(test_push_events_sm_function);
+        .with_push_events(handle_push_events);
 
     let listener_environment = Arc::new(SlackClientEventsListenerEnvironment::new(
         socket_client.clone(),
